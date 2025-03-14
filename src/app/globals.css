@@ -1,0 +1,15 @@
+@import "../../public/fonts.css";
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Toss Product Sans, sans-serif;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@config "../../tailwind.config.ts"

@@ -1,0 +1,40 @@
+{
+  "name": "file-yo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@heroui/react": "^2.7.6-beta.2",
+    "@tanstack/react-query": "^5.67.3",
+    "@tanstack/react-query-devtools": "^5.67.3",
+    "framer-motion": "^12.5.0",
+    "jszip": "^3.10.1",
+    "next": "15.2.2",
+    "next-themes": "^0.4.6",
+    "peerjs": "^1.5.4",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@iconify/react": "^5.2.0",
+    "@tailwindcss/postcss": "^4",
+    "@tanstack/eslint-plugin-query": "^5.67.2",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.2.2",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-prettier": "^5.2.3",
+    "prettier": "^3.5.3",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
