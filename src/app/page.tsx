@@ -2,16 +2,15 @@
 
 import { FileUpload, Share } from './_components'
 import { useFileSelect } from '@/shared/hooks'
-import { usePeerConnection } from '@/shared/hooks/use-peer-connection'
+import { useCallback, useState } from 'react'
 
 export default function Home() {
+  const [startShare, setStartShare] = useState<boolean>(false)
   const { files, fileInputRef, handleClick, handleFileChange, fileMetaList, removeFile, clearFiles } = useFileSelect()
-  const { shareUrl, initiatePeer, connectedClients, stopUpload } = usePeerConnection()
 
-  const handleShare = () => {
-    // 업로더 역할로 피어 연결을 초기화 → 공유 URL 생성
-    initiatePeer({ files, fileMetaList })
-  }
+  const handleShare = useCallback(() => {
+    setStartShare(true)
+  }, [])
 
   return (
     <div className="w-full max-w-xl flex flex-col items-center justify-center gap-8 mt-3 px-4">
@@ -23,7 +22,7 @@ export default function Home() {
           <strong className="text-[#C4441D] font-bold">설치 없이</strong> 브라우저만 있으면 바로 전송할 수 있어요.
         </span>
       </div>
-      {!shareUrl ? (
+      {!startShare ? (
         <FileUpload
           props={{
             fileInputRef,
@@ -40,9 +39,7 @@ export default function Home() {
           props={{
             files,
             fileMetaList,
-            shareUrl,
-            connectedClients,
-            stopUpload
+            clearFiles
           }}
         />
       )}

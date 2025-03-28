@@ -1,6 +1,6 @@
 import 'server-only'
 import crypto from 'crypto'
-import { config } from '@/libs/config'
+import { config } from '@/shared/libs/config'
 
 /**
  * Generates an array of random words from a given word list.

@@ -1,7 +1,7 @@
 import 'server-only'
 import crypto from 'crypto'
-import { config } from '@/libs/config'
-import { generateLongSlug, generateShortSlug } from '@/libs/slug'
+import { config } from '@/shared/libs/config'
+import { generateLongSlug, generateShortSlug } from '@/shared/libs/slug'
 
 export type Channel = {
   secret?: string
@@ -102,6 +102,7 @@ export class MemoryChannelRepo implements ChannelRepo {
 
   async fetchChannel(slug: string, scrubSecret = false): Promise<Channel | null> {
     const shortKey = getShortSlugKey(slug)
+    console.log(shortKey)
     const shortChannel = this.channels.get(shortKey)
     if (shortChannel) {
       return scrubSecret ? { ...shortChannel.channel, secret: undefined } : shortChannel.channel
@@ -162,4 +163,14 @@ export class MemoryChannelRepo implements ChannelRepo {
     this.channels.delete(longKey)
     this.channels.delete(shortKey)
   }
+}
+
+let _channelRepo: ChannelRepo | null = null
+
+export function initChannelRepo(): ChannelRepo {
+  if (!_channelRepo) {
+    _channelRepo = new MemoryChannelRepo()
+    console.log('[ChannelRepo] Using in-memory storage')
+  }
+  return _channelRepo
 }
