@@ -1,6 +1,6 @@
 import 'server-only'
 import crypto from 'crypto'
-import { config } from '@/shared/libs/config'
+import { redisConfig } from '@/shared/libs/config'
 
 /**
  * Generates an array of random words from a given word list.
@@ -43,13 +43,13 @@ function generateRandomWords(wordList: string[], numWords: number): Promise<stri
 
 export const generateShortSlug = (): string => {
   let result = ''
-  for (let i = 0; i < config.shortSlug.numChars; i++) {
-    result += config.shortSlug.chars[Math.floor(Math.random() * config.shortSlug.chars.length)]
+  for (let i = 0; i < redisConfig.shortSlug.numChars; i++) {
+    result += redisConfig.shortSlug.chars[Math.floor(Math.random() * redisConfig.shortSlug.chars.length)]
   }
   return result
 }
 
 export const generateLongSlug = async (): Promise<string> => {
-  const parts = await generateRandomWords(config.longSlug.words, config.longSlug.numWords)
+  const parts = await generateRandomWords(redisConfig.longSlug.words, redisConfig.longSlug.numWords)
   return parts.join('/')
 }

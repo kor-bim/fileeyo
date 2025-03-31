@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { initChannelRepo } from '@/shared/libs/channel'
+import { channelRepo } from '@/shared/libs/channel'
 
 export async function POST(request: Request): Promise<NextResponse> {
   const { uploaderPeerID } = await request.json()
@@ -8,6 +8,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Uploader peer ID is required' }, { status: 400 })
   }
 
-  const channel = await initChannelRepo().createChannel(uploaderPeerID)
+  const channel = await channelRepo().createChannel(uploaderPeerID)
   return NextResponse.json(channel)
 }

@@ -1,2 +1,3 @@
-export * from './share'
-export * from './file-upload'
+export * from './share-screen'
+export * from './upload-screen'
+export * from './intro-screen'

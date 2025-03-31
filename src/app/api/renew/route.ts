@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { initChannelRepo } from '@/shared/libs/channel'
+import { channelRepo } from '@/shared/libs/channel'
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const { slug, secret } = await request.json()
@@ -12,6 +12,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Secret is required' }, { status: 400 })
   }
 
-  const success = await initChannelRepo().renewChannel(slug, secret)
+  const success = await channelRepo().renewChannel(slug, secret)
   return NextResponse.json({ success })
 }

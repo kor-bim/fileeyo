@@ -1,47 +1,53 @@
-import Peer, { DataConnection } from 'peerjs'
 import { useEffect, useState } from 'react'
-import {
-  decodeMessage,
-  Message,
-  MessageType,
-  UploadedFile,
-  UploaderConnection,
-  UploaderConnectionStatus
-} from '../types'
+import Peer, { DataConnection } from 'peerjs'
+import { UploadedFile, UploaderConnection, UploaderConnectionStatus, Message, MessageType } from '../types'
 import { getFileName } from '@/shared/libs/fs'
+import { decodeMessage } from '../types'
 
-const MAX_CHUNK_SIZE = 256 * 1024 // 256 KB
+// ✅ 파일 메타 정보 타입
+export type FileMeta = {
+  name: string
+  size: string
+  type: string
+}
 
-/**
- * 주어진 파일 목록에서 유효한 오프셋의 파일을 반환
- */
+const MAX_CHUNK_SIZE = 256 * 1024 // 256KB
+
 function validateOffset(files: UploadedFile[], fileName: string, offset: number): UploadedFile {
   const file = files.find((f) => getFileName(f) === fileName && offset <= f.size)
-  if (!file) throw new Error('invalid file offset')
+  if (!file) throw new Error('Invalid file or offset')
   return file
 }
 
 /**
- * 업로더 피어에서 수신되는 연결 및 메시지에 대한 처리 로직을 관리합니다.
- * 다운로더의 연결, 인증, 전송 제어를 포함합니다.
- *
- * @param peer - PeerJS 인스턴스
- * @param files - 업로드 대상 파일 목록
- * @param password - 접근 제어용 비밀번호 (없을 경우 생략 가능)
- * @returns 연결 상태 목록
+ * 📡 업로더 측에서 다운로더 연결을 처리하고 상태 및 메시지를 관리하는 커스텀 훅
  */
 export function useUploaderConnections(
   peer: Peer | null,
   files: UploadedFile[],
-  password: string
+  password: string,
+  fileMetaList: FileMeta[]
 ): UploaderConnection[] {
   const [connections, setConnections] = useState<UploaderConnection[]>([])
 
   useEffect(() => {
-    const cleanupHandlers: Array<() => void> = []
+    if (!peer) return
 
+    const activeConnections = new Set<DataConnection>()
+
+    /**
+     * 연결 상태 업데이트 유틸
+     */
+    const updateConnection = (conn: DataConnection, updater: (c: UploaderConnection) => UploaderConnection) => {
+      setConnections((prev) => prev.map((c) => (c.dataConnection === conn ? updater(c) : c)))
+    }
+
+    /**
+     * 📥 새로운 다운로더 연결 처리
+     */
     const handleConnection = (conn: DataConnection) => {
       if (conn.metadata?.type === 'report') {
+        console.warn('[⚠️ Report] 다운로더가 신고 요청함')
         setConnections((prev) => {
           prev.forEach((c) => {
             c.dataConnection.send({ type: MessageType.Report })
@@ -53,8 +59,11 @@ export function useUploaderConnections(
         return
       }
 
+      activeConnections.add(conn)
+
       let sendChunkTimeout: NodeJS.Timeout | null = null
 
+      // 초기 연결 상태 저장
       const connState: UploaderConnection = {
         dataConnection: conn,
         status: UploaderConnectionStatus.Pending,
@@ -65,167 +74,222 @@ export function useUploaderConnections(
 
       setConnections((prev) => [connState, ...prev])
 
-      const updateConnection = (fn: (c: UploaderConnection) => UploaderConnection) => {
-        setConnections((prev) => prev.map((c) => (c.dataConnection === conn ? fn(c) : c)))
+      const send = (msg: Message) => {
+        console.log('[📤 Uploader → Downloader]', msg)
+        conn.send(msg)
       }
 
-      const getFileInfo = () =>
-        files.map((f) => ({
-          fileName: getFileName(f),
-          size: f.size,
-          type: f.type
+      // 🧾 파일 정보 + 파일 메타 전송
+      const sendFileInfo = () => {
+        const infoMessage: Message = {
+          type: MessageType.Info,
+          files: files.map((f) => ({
+            name: getFileName(f),
+            size: f.size,
+            type: f.type
+          })),
+          fileMetaList
+        }
+        console.log('[📤 Uploader → Downloader] 파일 정보 전송', infoMessage)
+        send(infoMessage)
+      }
+
+      /**
+       * 📦 파일 전송 시작
+       */
+      const startTransfer = (fileName: string, startOffset: number) => {
+        let offset = startOffset
+        const file = validateOffset(files, fileName, offset)
+
+        updateConnection(conn, (c) => ({
+          ...c,
+          status: UploaderConnectionStatus.Uploading,
+          uploadingFileName: fileName,
+          uploadingOffset: offset,
+          currentFileProgress: offset / file.size
         }))
 
-      const onData = (data: any) => {
-        try {
-          const msg = decodeMessage(data)
+        const sendChunk = () => {
+          sendChunkTimeout = setTimeout(() => {
+            const end = Math.min(file.size, offset + MAX_CHUNK_SIZE)
+            const chunk = file.slice(offset, end)
+            const final = end === file.size
 
-          switch (msg.type) {
-            case MessageType.RequestInfo: {
-              const deviceInfo = {
-                browserName: msg.browserName,
-                browserVersion: msg.browserVersion,
-                osName: msg.osName,
-                osVersion: msg.osVersion,
-                mobileVendor: msg.mobileVendor,
-                mobileModel: msg.mobileModel
+            const chunkMessage: Message = {
+              type: MessageType.Chunk,
+              fileName,
+              offset,
+              bytes: chunk,
+              final
+            }
+            console.log('[📤 Uploader → Downloader] Chunk 전송', chunkMessage)
+            send(chunkMessage)
+
+            offset = end
+
+            updateConnection(conn, (c) => {
+              if (final) {
+                return {
+                  ...c,
+                  completedFiles: c.completedFiles + 1,
+                  currentFileProgress: 0,
+                  status: UploaderConnectionStatus.Ready
+                }
+              } else {
+                sendChunk()
+                return {
+                  ...c,
+                  uploadingOffset: offset,
+                  currentFileProgress: offset / file.size
+                }
               }
+            })
+          }, 0)
+        }
 
-              const nextStatus = password ? UploaderConnectionStatus.Authenticating : UploaderConnectionStatus.Ready
+        sendChunk()
+      }
 
-              updateConnection((c) =>
-                c.status === UploaderConnectionStatus.Pending ? { ...c, ...deviceInfo, status: nextStatus } : c
-              )
+      /**
+       * ⏸ 파일 전송 일시 중지
+       */
+      const pauseTransfer = () => {
+        if (sendChunkTimeout) clearTimeout(sendChunkTimeout)
+        updateConnection(conn, (c) =>
+          c.status === UploaderConnectionStatus.Uploading ? { ...c, status: UploaderConnectionStatus.Paused } : c
+        )
+      }
 
-              const response: Message = password
-                ? { type: MessageType.PasswordRequired }
-                : { type: MessageType.Info, files: getFileInfo() }
+      /**
+       * ✅ 전체 전송 완료
+       */
+      const completeTransfer = () => {
+        updateConnection(conn, (c) =>
+          c.status === UploaderConnectionStatus.Ready ? { ...c, status: UploaderConnectionStatus.Done } : c
+        )
+        conn.close()
+      }
 
-              conn.send(response)
-              break
+      /**
+       * 📥 다운로더가 보낸 메시지 처리
+       */
+      const handleMessage = (msg: Message) => {
+        console.log('[📥 Downloader → Uploader]', msg)
+
+        switch (msg.type) {
+          case MessageType.RequestInfo: {
+            const deviceInfo = {
+              browserName: msg.browserName,
+              browserVersion: msg.browserVersion,
+              osName: msg.osName,
+              osVersion: msg.osVersion,
+              mobileVendor: msg.mobileVendor,
+              mobileModel: msg.mobileModel
             }
 
-            case MessageType.UsePassword: {
-              const isValid = msg.password === password
-              const nextStatus = isValid ? UploaderConnectionStatus.Ready : UploaderConnectionStatus.InvalidPassword
+            updateConnection(conn, (c) =>
+              c.status === UploaderConnectionStatus.Pending
+                ? {
+                    ...c,
+                    ...deviceInfo,
+                    status: password ? UploaderConnectionStatus.Authenticating : UploaderConnectionStatus.Ready
+                  }
+                : c
+            )
 
-              updateConnection((c) =>
-                [UploaderConnectionStatus.Authenticating, UploaderConnectionStatus.InvalidPassword].includes(c.status)
-                  ? { ...c, status: nextStatus }
-                  : c
-              )
-
-              const response: Message = isValid
-                ? { type: MessageType.Info, files: getFileInfo() }
-                : { type: MessageType.PasswordRequired, errorMessage: 'Invalid password' }
-
-              conn.send(response)
-              break
+            if (password) {
+              send({ type: MessageType.PasswordRequired })
+            } else {
+              sendFileInfo()
             }
-
-            case MessageType.Start: {
-              const { fileName, offset: startOffset } = msg
-              let offset = startOffset
-              const file = validateOffset(files, fileName, offset)
-
-              const sendNextChunk = () => {
-                sendChunkTimeout = setTimeout(() => {
-                  const end = Math.min(file.size, offset + MAX_CHUNK_SIZE)
-                  const chunk = file.slice(offset, end)
-                  const final = end === file.size
-
-                  conn.send({
-                    type: MessageType.Chunk,
-                    fileName,
-                    offset,
-                    bytes: chunk,
-                    final
-                  })
-
-                  offset = end
-
-                  updateConnection((c) => {
-                    const updated: Partial<UploaderConnection> = final
-                      ? {
-                          completedFiles: c.completedFiles + 1,
-                          currentFileProgress: 0,
-                          status: UploaderConnectionStatus.Ready
-                        }
-                      : {
-                          uploadingOffset: offset,
-                          currentFileProgress: offset / file.size
-                        }
-
-                    if (!final) sendNextChunk()
-                    return { ...c, ...updated }
-                  })
-                }, 0)
-              }
-
-              updateConnection((c) =>
-                [UploaderConnectionStatus.Ready, UploaderConnectionStatus.Paused].includes(c.status)
-                  ? {
-                      ...c,
-                      status: UploaderConnectionStatus.Uploading,
-                      uploadingFileName: fileName,
-                      uploadingOffset: offset,
-                      currentFileProgress: offset / file.size
-                    }
-                  : c
-              )
-
-              sendNextChunk()
-              break
-            }
-
-            case MessageType.Pause: {
-              if (sendChunkTimeout) clearTimeout(sendChunkTimeout)
-              updateConnection((c) =>
-                c.status === UploaderConnectionStatus.Uploading ? { ...c, status: UploaderConnectionStatus.Paused } : c
-              )
-              break
-            }
-
-            case MessageType.Done: {
-              updateConnection((c) =>
-                c.status === UploaderConnectionStatus.Ready ? { ...c, status: UploaderConnectionStatus.Done } : c
-              )
-              conn.close()
-              break
-            }
+            break
           }
-        } catch (err) {
-          console.error('[UploaderConnections] 메시지 처리 중 오류:', err)
+
+          case MessageType.UsePassword: {
+            const isValid = msg.password === password
+            console.log('[📥 Downloader → Uploader] 비밀번호 인증 시도:', msg.password)
+
+            updateConnection(conn, (c) =>
+              [UploaderConnectionStatus.Authenticating, UploaderConnectionStatus.InvalidPassword].includes(c.status)
+                ? {
+                    ...c,
+                    status: isValid ? UploaderConnectionStatus.Ready : UploaderConnectionStatus.InvalidPassword
+                  }
+                : c
+            )
+
+            const response: Message = isValid
+              ? {
+                  type: MessageType.Info,
+                  files: files.map((f) => ({
+                    name: getFileName(f),
+                    size: f.size,
+                    type: f.type
+                  })),
+                  fileMetaList
+                }
+              : {
+                  type: MessageType.PasswordRequired,
+                  errorMessage: 'Invalid password'
+                }
+
+            console.log('[📤 Uploader → Downloader] 인증 응답 전송:', response)
+            send(response)
+            break
+          }
+
+          case MessageType.Start:
+            startTransfer(msg.fileName, msg.offset)
+            break
+
+          case MessageType.Pause:
+            pauseTransfer()
+            break
+
+          case MessageType.Done:
+            completeTransfer()
+            break
         }
       }
 
+      // 연결 종료 처리
       const onClose = () => {
         if (sendChunkTimeout) clearTimeout(sendChunkTimeout)
 
-        updateConnection((c) =>
+        updateConnection(conn, (c) =>
           [UploaderConnectionStatus.Done, UploaderConnectionStatus.InvalidPassword].includes(c.status)
             ? c
             : { ...c, status: UploaderConnectionStatus.Closed }
         )
+        activeConnections.delete(conn)
       }
 
-      conn.on('data', onData)
-      conn.on('close', onClose)
-
-      cleanupHandlers.push(() => {
-        conn.off('data', onData)
-        conn.off('close', onClose)
-        conn.close()
+      // 메시지 수신 처리 등록
+      conn.on('data', (raw) => {
+        try {
+          const msg = decodeMessage(raw)
+          handleMessage(msg)
+        } catch (err) {
+          console.error('[Uploader] 메시지 파싱 오류:', err)
+        }
       })
+
+      conn.on('close', onClose)
     }
 
-    peer?.on('connection', handleConnection)
+    // 피어 연결 수신 처리 등록
+    peer.on('connection', handleConnection)
 
     return () => {
-      peer?.off('connection', handleConnection)
-      cleanupHandlers.forEach((fn) => fn())
+      peer.off('connection', handleConnection)
+      activeConnections.forEach((conn) => {
+        conn.off('data')
+        conn.off('close')
+        conn.close()
+      })
+      activeConnections.clear()
     }
-  }, [peer, files, password])
+  }, [peer, files, password, fileMetaList])
 
   return connections
 }

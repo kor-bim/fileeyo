@@ -1,0 +1,31 @@
+services:
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn
+    container_name: coturn
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      # WebRTC relay 포트 (서비스용): 필요 시 추가
+      # - "49152-65535:49152-65535/udp"
+    environment:
+      - DETECT_EXTERNAL_IP=yes
+      - DETECT_RELAY_IP=yes
+    command: >
+      -n
+      --log-file=stdout
+      --redis-userdb="ip=host.docker.internal connect_timeout=30"
+    restart: unless-stopped
+
+volumes:
+  redis_data:

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import crypto from 'crypto'
+import { storeTurnAuthKeyInRedis } from '@/shared/libs/coturn'
 
 const turnHost = process.env.TURN_HOST || '127.0.0.1'
 
@@ -13,6 +14,10 @@ export async function POST(): Promise<NextResponse> {
   // Generate ephemeral credentials
   const username = crypto.randomBytes(8).toString('hex')
   const password = crypto.randomBytes(8).toString('hex')
+  const ttl = 86400 // 24 hours
+
+  // Store credentials in Redis
+  await storeTurnAuthKeyInRedis(username, password, ttl)
 
   return NextResponse.json({
     iceServers: [

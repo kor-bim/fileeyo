@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { initChannelRepo } from '@/shared/libs/channel'
+import { channelRepo } from '@/shared/libs/channel'
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const { slug } = await request.json()
@@ -9,7 +9,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    await initChannelRepo().destroyChannel(slug)
+    await channelRepo().destroyChannel(slug)
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (error) {
     console.error(error)

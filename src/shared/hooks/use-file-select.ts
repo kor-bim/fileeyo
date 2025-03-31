@@ -1,26 +1,9 @@
 import { useRef, useState, useCallback, useMemo, ChangeEvent } from 'react'
+import { UploadStep } from '@/shared/types'
 
-export function useFileSelect() {
+export function useFileSelect(onSelect?: (ctx: UploadStep) => void) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [files, setFiles] = useState<File[]>([])
-
-  const handleClick = useCallback(() => {
-    fileInputRef.current?.click()
-  }, [])
-
-  const handleFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setFiles(Array.from(e.target.files))
-    }
-  }, [])
-
-  const removeFile = useCallback((index: number) => {
-    setFiles((prev) => prev.filter((_, i) => i !== index))
-  }, [])
-
-  const clearFiles = useCallback(() => {
-    setFiles([])
-  }, [])
 
   const formatFileSize = useCallback((size: number): string => {
     if (size >= 1 << 30) return `${(size / (1 << 30)).toFixed(2)} GB`
@@ -39,10 +22,46 @@ export function useFileSelect() {
     [files, formatFileSize]
   )
 
+  const handleClick = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  const handleFileChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.files) return
+
+      const selected = Array.from(e.target.files)
+      setFiles(selected)
+
+      if (onSelect) {
+        const meta = selected.map((file) => ({
+          name: file.name,
+          type: file.type || 'unknown',
+          size: formatFileSize(file.size)
+        }))
+
+        onSelect({
+          files: selected,
+          fileMetaList: meta,
+          password: ''
+        })
+      }
+    },
+    [onSelect, formatFileSize]
+  )
+
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const clearFiles = useCallback(() => {
+    setFiles([])
+  }, [])
+
   return {
     files,
-    fileInputRef,
     fileMetaList,
+    fileInputRef,
     handleClick,
     handleFileChange,
     removeFile,

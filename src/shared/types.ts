@@ -1,6 +1,14 @@
 import type { DataConnection } from 'peerjs'
 import { z } from 'zod'
 
+export type Intro = object
+export type UploadStep = {
+  files: File[]
+  fileMetaList: { name: string; size: string; type: string }[]
+  password?: string
+}
+export type ShareStep = Required<UploadStep>
+
 export type UploadedFile = File & { entryFullPath?: string }
 
 export enum UploaderConnectionStatus {
@@ -57,11 +65,20 @@ export const InfoMessage = z.object({
   type: z.literal(MessageType.Info),
   files: z.array(
     z.object({
-      fileName: z.string(),
+      name: z.string(),
       size: z.number(),
       type: z.string()
     })
-  )
+  ),
+  fileMetaList: z
+    .array(
+      z.object({
+        name: z.string(),
+        size: z.string(), // 사람이 읽는 용도라면 string, 아니라면 number
+        type: z.string()
+      })
+    )
+    .optional()
 })
 
 export const StartMessage = z.object({

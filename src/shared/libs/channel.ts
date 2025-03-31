@@ -1,7 +1,9 @@
 import 'server-only'
 import crypto from 'crypto'
-import { config } from '@/shared/libs/config'
 import { generateLongSlug, generateShortSlug } from '@/shared/libs/slug'
+import { getRedisClient, Redis } from './redis'
+import { z } from 'zod'
+import { redisConfig } from '@/shared/libs/config'
 
 export type Channel = {
   secret?: string
@@ -10,10 +12,20 @@ export type Channel = {
   uploaderPeerID: string
 }
 
-export interface ChannelRepo {
+const ChannelSchema = z.object({
+  secret: z.string().optional(),
+  longSlug: z.string(),
+  shortSlug: z.string(),
+  uploaderPeerID: z.string()
+})
+
+export interface IChannelRepo {
   createChannel(uploaderPeerID: string, ttl?: number): Promise<Channel>
+
   fetchChannel(slug: string): Promise<Channel | null>
+
   renewChannel(slug: string, secret: string, ttl?: number): Promise<boolean>
+
   destroyChannel(slug: string): Promise<void>
 }
 
@@ -26,7 +38,7 @@ function getLongSlugKey(longSlug: string): string {
 }
 
 async function generateShortSlugUntilUnique(checkExists: (key: string) => Promise<boolean>): Promise<string> {
-  for (let i = 0; i < config.shortSlug.maxAttempts; i++) {
+  for (let i = 0; i < redisConfig.shortSlug.maxAttempts; i++) {
     const slug = generateShortSlug()
     const exists = await checkExists(getShortSlugKey(slug))
     if (!exists) {
@@ -38,7 +50,7 @@ async function generateShortSlugUntilUnique(checkExists: (key: string) => Promis
 }
 
 async function generateLongSlugUntilUnique(checkExists: (key: string) => Promise<boolean>): Promise<string> {
-  for (let i = 0; i < config.longSlug.maxAttempts; i++) {
+  for (let i = 0; i < redisConfig.longSlug.maxAttempts; i++) {
     const slug = await generateLongSlug()
     const exists = await checkExists(getLongSlugKey(slug))
     if (!exists) {
@@ -49,34 +61,29 @@ async function generateLongSlugUntilUnique(checkExists: (key: string) => Promise
   throw new Error('max attempts reached generating long slug')
 }
 
-type MemoryStoredChannel = {
-  channel: Channel
-  expiresAt: number
+function serializeChannel(channel: Channel): string {
+  return JSON.stringify(channel)
 }
 
-export class MemoryChannelRepo implements ChannelRepo {
-  private channels: Map<string, MemoryStoredChannel> = new Map()
-  private timeouts: Map<string, NodeJS.Timeout> = new Map()
+function deserializeChannel(str: string, scrubSecret = false): Channel {
+  const parsedChannel = JSON.parse(str)
+  const validatedChannel = ChannelSchema.parse(parsedChannel)
+  if (scrubSecret) {
+    return { ...validatedChannel, secret: undefined }
+  }
+  return validatedChannel
+}
 
-  private setChannelTimeout(slug: string, ttl: number) {
-    // Clear any existing timeout
-    const existingTimeout = this.timeouts.get(slug)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-    }
+export class RedisChannelRepo implements IChannelRepo {
+  client: Redis
 
-    // Set new timeout to remove channel when expired
-    const timeout = setTimeout(() => {
-      this.channels.delete(slug)
-      this.timeouts.delete(slug)
-    }, ttl * 1000)
-
-    this.timeouts.set(slug, timeout)
+  constructor() {
+    this.client = getRedisClient()
   }
 
-  async createChannel(uploaderPeerID: string, ttl: number = config.channel.ttl): Promise<Channel> {
-    const shortSlug = await generateShortSlugUntilUnique(async (key) => this.channels.has(key))
-    const longSlug = await generateLongSlugUntilUnique(async (key) => this.channels.has(key))
+  async createChannel(uploaderPeerID: string, ttl: number = redisConfig.channel.ttl): Promise<Channel> {
+    const shortSlug = await generateShortSlugUntilUnique(async (key) => (await this.client.get(key)) !== null)
+    const longSlug = await generateLongSlugUntilUnique(async (key) => (await this.client.get(key)) !== null)
 
     const channel: Channel = {
       secret: crypto.randomUUID(),
@@ -84,56 +91,36 @@ export class MemoryChannelRepo implements ChannelRepo {
       shortSlug,
       uploaderPeerID
     }
+    const channelStr = serializeChannel(channel)
 
-    const expiresAt = Date.now() + ttl * 1000
-    const storedChannel = { channel, expiresAt }
-
-    const shortKey = getShortSlugKey(shortSlug)
-    const longKey = getLongSlugKey(longSlug)
-
-    this.channels.set(shortKey, storedChannel)
-    this.channels.set(longKey, storedChannel)
-
-    this.setChannelTimeout(shortKey, ttl)
-    this.setChannelTimeout(longKey, ttl)
+    await this.client.setex(getLongSlugKey(longSlug), ttl, channelStr)
+    await this.client.setex(getShortSlugKey(shortSlug), ttl, channelStr)
 
     return channel
   }
 
   async fetchChannel(slug: string, scrubSecret = false): Promise<Channel | null> {
-    const shortKey = getShortSlugKey(slug)
-    console.log(shortKey)
-    const shortChannel = this.channels.get(shortKey)
-    if (shortChannel) {
-      return scrubSecret ? { ...shortChannel.channel, secret: undefined } : shortChannel.channel
+    const shortChannelStr = await this.client.get(getShortSlugKey(slug))
+    if (shortChannelStr) {
+      return deserializeChannel(shortChannelStr, scrubSecret)
     }
 
-    const longKey = getLongSlugKey(slug)
-    const longChannel = this.channels.get(longKey)
-    if (longChannel) {
-      return scrubSecret ? { ...longChannel.channel, secret: undefined } : longChannel.channel
+    const longChannelStr = await this.client.get(getLongSlugKey(slug))
+    if (longChannelStr) {
+      return deserializeChannel(longChannelStr, scrubSecret)
     }
 
     return null
   }
 
-  async renewChannel(slug: string, secret: string, ttl: number = config.channel.ttl): Promise<boolean> {
+  async renewChannel(slug: string, secret: string, ttl: number = redisConfig.channel.ttl): Promise<boolean> {
     const channel = await this.fetchChannel(slug)
     if (!channel || channel.secret !== secret) {
       return false
     }
 
-    const expiresAt = Date.now() + ttl * 1000
-    const storedChannel = { channel, expiresAt }
-
-    const shortKey = getShortSlugKey(channel.shortSlug)
-    const longKey = getLongSlugKey(channel.longSlug)
-
-    this.channels.set(longKey, storedChannel)
-    this.channels.set(shortKey, storedChannel)
-
-    this.setChannelTimeout(shortKey, ttl)
-    this.setChannelTimeout(longKey, ttl)
+    await this.client.expire(getLongSlugKey(channel.longSlug), ttl)
+    await this.client.expire(getShortSlugKey(channel.shortSlug), ttl)
 
     return true
   }
@@ -144,33 +131,17 @@ export class MemoryChannelRepo implements ChannelRepo {
       return
     }
 
-    const shortKey = getShortSlugKey(channel.shortSlug)
-    const longKey = getLongSlugKey(channel.longSlug)
-
-    // Clear timeouts
-    const shortTimeout = this.timeouts.get(shortKey)
-    if (shortTimeout) {
-      clearTimeout(shortTimeout)
-      this.timeouts.delete(shortKey)
-    }
-
-    const longTimeout = this.timeouts.get(longKey)
-    if (longTimeout) {
-      clearTimeout(longTimeout)
-      this.timeouts.delete(longKey)
-    }
-
-    this.channels.delete(longKey)
-    this.channels.delete(shortKey)
+    await this.client.del(getLongSlugKey(channel.longSlug))
+    await this.client.del(getShortSlugKey(channel.shortSlug))
   }
 }
 
-let _channelRepo: ChannelRepo | null = null
+let _channelRepo: IChannelRepo | null = null
 
-export function initChannelRepo(): ChannelRepo {
+export function channelRepo(): IChannelRepo {
   if (!_channelRepo) {
-    _channelRepo = new MemoryChannelRepo()
-    console.log('[ChannelRepo] Using in-memory storage')
+    _channelRepo = new RedisChannelRepo()
+    console.log('[ChannelRepo] Using Redis storage')
   }
   return _channelRepo
 }

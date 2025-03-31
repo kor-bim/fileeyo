@@ -99,7 +99,7 @@ const toppings = [
   'zucchini'
 ]
 
-export const config = {
+export const redisConfig = {
   redisURL: 'redis://localhost:6379/0',
   channel: {
     ttl: 60 * 60 // 1 hour

@@ -1,39 +1,31 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import Peer from 'peerjs'
+import { destroyPeerInstance, getPeerInstance } from '@/shared/libs/peer-manager'
+import type Peer from 'peerjs'
 
-let globalPeer: Peer | null = null
-
-export function useWebRTCPeer() {
-  const [peer, setPeer] = useState<Peer | null>(globalPeer)
+export function useWebRTCPeerConnection() {
+  const [peer, setPeer] = useState<Peer | null>(null)
   const [error, setError] = useState<Error | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   const stop = useCallback(() => {
-    globalPeer?.destroy()
-    globalPeer = null
+    destroyPeerInstance()
     setPeer(null)
+    setIsLoading(false)
   }, [])
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const { iceServers } = await fetch('/api/ice', { method: 'POST' }).then((res) => res.json())
-        const p = new Peer({ config: { iceServers }, debug: 2 })
-
-        p.on('open', () => {
-          globalPeer = p
-          setPeer(p)
-        })
-
-        p.on('error', setError)
-      } catch (err) {
-        setError(err as Error)
-      }
-    }
-
-    init().then((r) => console.log(r))
+    getPeerInstance()
+      .then((peer) => {
+        setPeer(peer)
+        setIsLoading(false)
+      })
+      .catch((err) => {
+        setError(err)
+        setIsLoading(false)
+      })
   }, [])
 
-  return { peer, stop, error, isLoading: !peer && !error }
+  return { peer, stop, error, isLoading }
 }
